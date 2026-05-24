@@ -780,6 +780,7 @@ function getNextOccurrence(event) {
 // ===== VIEW LAYER =====
 function formatDate(dateStr) {
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return { month: '?', day: '?', weekday: '?', time: '?:?', fullDate: '未知日期' };
   const month = d.getMonth() + 1;
   const day = d.getDate();
   const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -1102,6 +1103,8 @@ function checkReminders() {
   scheduleNextCheck();
 }
 
+let nextCheckTimer = null;
+
 function scheduleNextCheck() {
   const events = loadEvents();
   const now = Date.now();
@@ -1119,12 +1122,11 @@ function scheduleNextCheck() {
     }
   }
 
-  // Clear existing scheduled check
-  if (scheduleNextCheck._timer) clearTimeout(scheduleNextCheck._timer);
+  if (nextCheckTimer) clearTimeout(nextCheckTimer);
 
   if (nextRemindAt < Infinity) {
     const delay = Math.max(5000, nextRemindAt - now + 1000);
-    scheduleNextCheck._timer = setTimeout(() => {
+    nextCheckTimer = setTimeout(function() {
       checkReminders();
     }, delay);
   }
