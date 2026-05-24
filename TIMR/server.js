@@ -6,6 +6,12 @@ const cron = require('node-cron');
 
 const app = express();
 app.use(express.json());
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 const DATA_FILE = path.join(__dirname, 'events.json');
 const BARK_URL = 'https://api.day.app/immjwd46NAn8ry7zYnfGPj/';

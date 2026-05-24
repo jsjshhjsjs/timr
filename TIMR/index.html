@@ -712,8 +712,7 @@ function saveEvents(events) {
 }
 
 function syncEventsToBackend(events) {
-  const backendUrl = localStorage.getItem('timr_backend_url');
-  if (!backendUrl) return;
+  const backendUrl = localStorage.getItem('timr_backend_url') || 'https://timr-2khz.onrender.com';
   fetch(backendUrl + '/api/sync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
