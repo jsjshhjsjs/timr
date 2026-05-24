@@ -1,32 +1,21 @@
 // TIMR Backend — Event Storage + iOS Bark Push
-const express = require('express');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const cron = require('node-cron');
-
-const app = express();
-app.use(express.json());
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
 
 const DATA_FILE = path.join(__dirname, 'events.json');
 const BARK_URL = 'https://api.day.app/immjwd46NAn8ry7zYnfGPj/';
 
-// Read/write events
 function loadEvents() {
   try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); }
   catch { return []; }
 }
 
 function saveEvents(events) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(events), 'utf-8');
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify(events), 'utf-8'); }
+  catch(e) { console.error('saveEvents error:', e.message); }
 }
 
-// Same logic as frontend: get next occurrence
 function getNextOccurrence(ev) {
   const base = new Date(ev.datetime).getTime();
   if (ev.repeat === 'none') return base;
@@ -43,37 +32,17 @@ function getNextOccurrence(ev) {
 
 function formatDate(dateStr) {
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return { fullDate: '?', weekday: '?', time: '?:?' };
   const days = ['周日','周一','周二','周三','周四','周五','周六'];
-  const mm = String(d.getMinutes()).padStart(2, '0');
   return {
     fullDate: `${d.getMonth()+1}月${d.getDate()}日`,
     weekday: days[d.getDay()],
-    time: `${String(d.getHours()).padStart(2, '0')}:${mm}`,
+    time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
   };
 }
 
-// ===== API: Sync events from frontend =====
-app.post('/api/sync', (req, res) => {
-  const events = req.body.events;
-  if (!Array.isArray(events)) return res.status(400).json({ error: 'events array required' });
-  saveEvents(events);
-  res.json({ ok: true, count: events.length });
-});
-
-// ===== API: Manual trigger check =====
-app.post('/api/check', (req, res) => {
-  checkAndNotify();
-  res.json({ ok: true });
-});
-
-// ===== API: Health check =====
-app.get('/api/health', (req, res) => {
-  const events = loadEvents();
-  res.json({ ok: true, events: events.length });
-});
-
-// ===== Core: Check events and send Bark =====
 function checkAndNotify() {
+  console.log('checkAndNotify running...');
   const events = loadEvents();
   const now = Date.now();
   let changed = false;
@@ -94,9 +63,9 @@ function checkAndNotify() {
     const title = 'TIMR · 事件提醒';
     const body = `「${ev.title}」— ${d.fullDate} ${d.weekday} ${d.time}`;
 
-    // Send Bark notification
-    fetch(BARK_URL + encodeURIComponent(title) + '/' + encodeURIComponent(body))
-      .catch(() => {});
+    try {
+      http.get(BARK_URL + encodeURIComponent(title) + '/' + encodeURIComponent(body), () => {});
+    } catch(e) {}
 
     console.log(`Bark sent: ${ev.title} — ${d.fullDate} ${d.time}`);
 
@@ -108,15 +77,50 @@ function checkAndNotify() {
   if (changed) saveEvents(events);
 }
 
-// Run check every 30 seconds
-cron.schedule('* * * * *', checkAndNotify);
-cron.schedule('* * * * *', checkAndNotify); // Run twice per minute
+// ===== HTTP Server =====
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
-// Also initial check
-setTimeout(checkAndNotify, 5000);
+  if (req.method === 'GET' && req.url === '/api/health') {
+    const events = loadEvents();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, events: events.length }));
+    return;
+  }
 
-// ===== Start server =====
+  if (req.method === 'POST' && req.url === '/api/sync') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        if (Array.isArray(data.events)) {
+          saveEvents(data.events);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, count: data.events.length }));
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'events array required' }));
+        }
+      } catch(e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid JSON' }));
+      }
+    });
+    return;
+  }
+
+  res.writeHead(404);
+  res.end('Not Found');
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`TIMR backend running on port ${PORT}`);
 });
+
+// Check every 30 seconds using built-in setInterval (no deps needed)
+setInterval(checkAndNotify, 30000);
+setTimeout(checkAndNotify, 3000);
